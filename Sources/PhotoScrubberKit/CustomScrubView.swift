@@ -1,4 +1,7 @@
 import UIKit
+import OSLog
+
+private let log = Logger(subsystem: "PhotoScrubberKit", category: "rotation-check")
 
 public enum ScrubAxis: Sendable {
     case horizontal
@@ -147,8 +150,12 @@ public final class CustomScrubView: UICollectionView {
                 let target: CGPoint = (axis == .horizontal)
                     ? CGPoint(x: CGFloat(preservedIndex) * extent, y: 0)
                     : CGPoint(x: 0, y: CGFloat(preservedIndex) * extent)
+                let before = contentOffset
                 if contentOffset != target {
+                    log.notice("🔧 layoutSubviews fallback: bounds \(NSCoder.string(for: oldBoundsSize)) → \(NSCoder.string(for: self.bounds.size)), offset \(NSCoder.string(for: before)) → \(NSCoder.string(for: target)) (idx=\(preservedIndex))")
                     contentOffset = target
+                } else {
+                    log.notice("✅ layoutSubviews fallback: bounds changed but offset already at target \(NSCoder.string(for: target)) (idx=\(preservedIndex)) — invalidationContext did the work")
                 }
                 currentPageIndex = preservedIndex
                 lastReportedPage = preservedIndex
@@ -222,8 +229,6 @@ private final class PagingLayout: UICollectionViewFlowLayout {
         let oldExtent = isH ? cv.bounds.width : cv.bounds.height
         let newExtent = isH ? newBounds.width : newBounds.height
         guard oldExtent > 0, newExtent > 0 else { return context }
-        // 現 contentOffset から「今どのページを見ているか」を逆算し、
-        // 新 extent で同じページに合わせる差分を contentOffsetAdjustment に。
         let oldOffsetAlong = isH ? cv.contentOffset.x : cv.contentOffset.y
         let targetIndex = (oldOffsetAlong / oldExtent).rounded()
         let newOffsetAlong = targetIndex * newExtent
@@ -231,6 +236,7 @@ private final class PagingLayout: UICollectionViewFlowLayout {
         context.contentOffsetAdjustment = isH
             ? CGPoint(x: adjustment, y: 0)
             : CGPoint(x: 0, y: adjustment)
+        log.notice("📐 invalidationContext: bounds \(NSCoder.string(for: cv.bounds.size)) → \(NSCoder.string(for: newBounds.size)), idx=\(Int(targetIndex)), adjustment=\(adjustment)")
         return context
     }
 }
