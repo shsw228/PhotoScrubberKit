@@ -142,6 +142,8 @@ public final class ScrubberStripView: UIScrollView {
         let target = offsetForProgress(clamped)
         let point = isHorizontal ? CGPoint(x: target, y: 0) : CGPoint(x: 0, y: target)
         setContentOffset(point, animated: animated)
+        // handleScroll は user-driven のみ反映するので、ここで明示的に progress を更新する。
+        self.progress = clamped
     }
 
     public func appendThumbnail() {
@@ -307,7 +309,11 @@ public final class ScrubberStripView: UIScrollView {
 
         let raw = progressForOffset(currentMainOffset)
         let clamped = max(0, min(CGFloat(thumbCount - 1), raw))
-        if clamped != progress {
+        // 回転中など UIKit 由来の bounds/contentOffset 変化で progress を書き換えると
+        // mirror 経由で main の currentPageIndex まで壊れるので、ユーザー操作起因の
+        // スクロール時のみ progress / delegate を更新する。
+        let isUserDriven = isTracking || isDragging || isDecelerating
+        if isUserDriven, clamped != progress {
             progress = clamped
             stripDelegate?.stripView(self, didUpdateProgress: clamped)
         }
