@@ -36,6 +36,7 @@ public final class CustomScrubView: UICollectionView {
     private let pagingLayout = PagingLayout()
     private let scrollProxy = ScrollProxy()
     private var lastReportedPage: Int = -1
+    private var lastObservedBoundsSize: CGSize = .zero
 
     public init() {
         super.init(frame: .zero, collectionViewLayout: pagingLayout)
@@ -134,7 +135,26 @@ public final class CustomScrubView: UICollectionView {
     }
 
     public override func layoutSubviews() {
+        // 回転等で bounds.size が変わると、UICollectionView の invalidationContext
+        // が contentOffset を補正してくれるはずだが、内部 auto-clamp や handleScroll の
+        // 発火タイミングで負けることがあるので、super 通過後に強制で復元する。
+        let oldBoundsSize = lastObservedBoundsSize
+        let preservedIndex = currentPageIndex
         super.layoutSubviews()
+        if oldBoundsSize != .zero, bounds.size != oldBoundsSize, itemCount > 0 {
+            let extent = pageExtent
+            if extent > 0 {
+                let target: CGPoint = (axis == .horizontal)
+                    ? CGPoint(x: CGFloat(preservedIndex) * extent, y: 0)
+                    : CGPoint(x: 0, y: CGFloat(preservedIndex) * extent)
+                if contentOffset != target {
+                    contentOffset = target
+                }
+                currentPageIndex = preservedIndex
+                lastReportedPage = preservedIndex
+            }
+        }
+        lastObservedBoundsSize = bounds.size
     }
 
     fileprivate func makeCell(at indexPath: IndexPath, in cv: UICollectionView) -> UICollectionViewCell {
