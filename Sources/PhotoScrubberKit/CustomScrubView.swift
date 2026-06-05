@@ -1,7 +1,4 @@
 import UIKit
-import OSLog
-
-private let log = Logger(subsystem: "PhotoScrubberKit", category: "rotation-check")
 
 public enum ScrubAxis: Sendable {
     case horizontal
@@ -160,12 +157,8 @@ public final class CustomScrubView: UICollectionView {
                 let target: CGPoint = (axis == .horizontal)
                     ? CGPoint(x: CGFloat(preservedPage) * newExtent, y: 0)
                     : CGPoint(x: 0, y: CGFloat(preservedPage) * newExtent)
-                let before = contentOffset
                 if contentOffset != target {
-                    log.notice("🔧 fallback restored: bounds \(NSCoder.string(for: oldBoundsSize)) → \(NSCoder.string(for: self.bounds.size)), offset \(NSCoder.string(for: before)) → \(NSCoder.string(for: target)) (page \(preservedPage))")
                     contentOffset = target
-                } else {
-                    log.notice("✅ fallback skip: already at target \(NSCoder.string(for: target)) (page \(preservedPage))")
                 }
                 lastReportedPage = preservedPage
             }
@@ -251,7 +244,6 @@ private final class PagingLayout: UICollectionViewFlowLayout {
         context.contentOffsetAdjustment = isH
             ? CGPoint(x: adjustment, y: 0)
             : CGPoint(x: 0, y: adjustment)
-        log.notice("📐 invalidationContext: bounds \(NSCoder.string(for: cv.bounds.size)) → \(NSCoder.string(for: newBounds.size)), idx=\(Int(targetIndex)), adjustment=\(adjustment)")
         return context
     }
 }
