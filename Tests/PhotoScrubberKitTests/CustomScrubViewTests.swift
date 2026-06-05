@@ -64,9 +64,9 @@ final class CustomScrubViewTests: XCTestCase {
         withExtendedLifetime(ds) {}
     }
 
-    func testCurrentPageIndexAfterScroll() {
+    func testCurrentPageIndexAfterSetCurrentPage() {
         let (view, ds, _) = makeScrubView(pageCount: 10)
-        view.contentOffset = CGPoint(x: 320 * 5, y: 0)
+        view.setCurrentPage(5, animated: false)
         view.layoutIfNeeded()
         XCTAssertEqual(view.currentPageIndex, 5)
         XCTAssertNotNil(view.visibleView)
