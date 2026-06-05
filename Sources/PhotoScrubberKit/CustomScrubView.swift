@@ -134,8 +134,6 @@ public final class CustomScrubView: UICollectionView {
     }
 
     public override func layoutSubviews() {
-        // 回転時に currentPageIndex を保持するために layout 側にヒントを渡しておく。
-        pagingLayout.preservedItemIndex = currentPageIndex
         super.layoutSubviews()
     }
 
@@ -172,7 +170,6 @@ public final class CustomScrubView: UICollectionView {
 }
 
 private final class PagingLayout: UICollectionViewFlowLayout {
-    var preservedItemIndex: Int = 0
 
     override init() {
         super.init()
@@ -202,13 +199,18 @@ private final class PagingLayout: UICollectionViewFlowLayout {
         let context = super.invalidationContext(forBoundsChange: newBounds)
         guard let cv = collectionView, cv.bounds.size != newBounds.size else { return context }
         let isH = scrollDirection == .horizontal
+        let oldExtent = isH ? cv.bounds.width : cv.bounds.height
         let newExtent = isH ? newBounds.width : newBounds.height
-        guard newExtent > 0 else { return context }
-        let newOffsetAlong = CGFloat(preservedItemIndex) * newExtent
+        guard oldExtent > 0, newExtent > 0 else { return context }
+        // 現 contentOffset から「今どのページを見ているか」を逆算し、
+        // 新 extent で同じページに合わせる差分を contentOffsetAdjustment に。
         let oldOffsetAlong = isH ? cv.contentOffset.x : cv.contentOffset.y
+        let targetIndex = (oldOffsetAlong / oldExtent).rounded()
+        let newOffsetAlong = targetIndex * newExtent
+        let adjustment = newOffsetAlong - oldOffsetAlong
         context.contentOffsetAdjustment = isH
-            ? CGPoint(x: newOffsetAlong - oldOffsetAlong, y: 0)
-            : CGPoint(x: 0, y: newOffsetAlong - oldOffsetAlong)
+            ? CGPoint(x: adjustment, y: 0)
+            : CGPoint(x: 0, y: adjustment)
         return context
     }
 }
