@@ -1,6 +1,7 @@
 import XCTest
 @testable import PhotoScrubberKit
 
+@MainActor
 final class CustomScrubViewTests: XCTestCase {
 
     final class StubDataSource: CustomScrubViewDataSource {
@@ -64,13 +65,14 @@ final class CustomScrubViewTests: XCTestCase {
     }
 
     func testRecyclingWhenScrollingFar() {
-        let (view, _, _) = makeScrubView(pageCount: 10)
+        let (view, ds, _) = makeScrubView(pageCount: 10)
         view.contentOffset = CGPoint(x: 320 * 5, y: 0) // jump to page 5
         view.layoutIfNeeded()
         let mountedTags = view.subviews.map(\.tag).filter { (0..<10).contains($0) }.sorted()
         XCTAssertEqual(mountedTags, [4, 5, 6])
         XCTAssertEqual(view.currentPageIndex, 5)
         XCTAssertEqual(view.visibleView?.tag, 5)
+        withExtendedLifetime(ds) {}   // pageDataSource は weak。テスト終了まで生存させる
     }
 
     func testKVOOnProgress() {
