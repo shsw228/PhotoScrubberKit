@@ -5,12 +5,18 @@ public enum ScrubAxis: Sendable {
     case vertical
 }
 
-public final class CustomScrubView: UIScrollView {
+@MainActor
+public final class CustomScrubView: UICollectionView {
 
     public var axis: ScrubAxis = .horizontal {
         didSet {
             guard oldValue != axis else { return }
-            handleAxisChange()
+            pagingLayout.scrollDirection = (axis == .horizontal) ? .horizontal : .vertical
+            pagingLayout.invalidateLayout()
+            setContentOffset(.zero, animated: false)
+            currentPageIndex = 0
+            lastReportedPage = -1
+            progress = 0
         }
     }
 
@@ -18,17 +24,21 @@ public final class CustomScrubView: UIScrollView {
     public weak var pageDelegate: (any CustomScrubViewDelegate)?
 
     @objc dynamic public private(set) var progress: CGFloat = 0
-    public private(set) var visibleView: UIView?
     public private(set) var currentPageIndex: Int = 0
 
-    private var numberOfPages: Int = 0
-    private var mountedPages: [Int: UIView] = [:]
-    private var lastReportedPage: Int = -1
-    private var lastBoundsSize: CGSize = .zero
-    private var isAnimatingMutation: Bool = false
+    public var visibleView: UIView? {
+        guard itemCount > 0 else { return nil }
+        let indexPath = IndexPath(item: currentPageIndex, section: 0)
+        return (cellForItem(at: indexPath) as? PageCell)?.hostedView
+    }
 
-    public override init(frame: CGRect) {
-        super.init(frame: frame)
+    fileprivate var itemCount: Int = 0
+    private let pagingLayout = PagingLayout()
+    private let scrollProxy = ScrollProxy()
+    private var lastReportedPage: Int = -1
+
+    public init() {
+        super.init(frame: .zero, collectionViewLayout: pagingLayout)
         commonInit()
     }
 
@@ -42,226 +52,205 @@ public final class CustomScrubView: UIScrollView {
         showsHorizontalScrollIndicator = false
         showsVerticalScrollIndicator = false
         contentInsetAdjustmentBehavior = .never
+        backgroundColor = .clear
+        pagingLayout.scrollDirection = (axis == .horizontal) ? .horizontal : .vertical
+        scrollProxy.owner = self
+        delegate = scrollProxy
+        dataSource = scrollProxy
+        register(PageCell.self, forCellWithReuseIdentifier: PageCell.reuseID)
     }
 
-    public func reloadData() {
-        for view in mountedPages.values {
-            view.removeFromSuperview()
-        }
-        mountedPages.removeAll()
-        lastReportedPage = -1
-        visibleView = nil
+    public override func reloadData() {
+        itemCount = pageDataSource?.numberOfPages(in: self) ?? 0
         currentPageIndex = 0
-        numberOfPages = pageDataSource?.numberOfPages(in: self) ?? 0
-        updateContentSize()
-        setNeedsLayout()
-        layoutIfNeeded()
+        lastReportedPage = -1
+        progress = 0
+        super.reloadData()
     }
 
     public func setCurrentPage(_ index: Int, animated: Bool) {
-        guard index >= 0, index < numberOfPages else { return }
+        guard index >= 0, index < itemCount else { return }
         let extent = pageExtent
         guard extent > 0 else { return }
-        switch axis {
-        case .horizontal:
-            setContentOffset(CGPoint(x: CGFloat(index) * extent, y: 0), animated: animated)
-        case .vertical:
-            setContentOffset(CGPoint(x: 0, y: CGFloat(index) * extent), animated: animated)
-        }
+        let point: CGPoint = (axis == .horizontal)
+            ? CGPoint(x: CGFloat(index) * extent, y: 0)
+            : CGPoint(x: 0, y: CGFloat(index) * extent)
+        setContentOffset(point, animated: animated)
     }
 
     public func setProgress(_ progress: CGFloat, animated: Bool = false) {
-        guard numberOfPages > 0 else { return }
+        guard itemCount > 0 else { return }
         let extent = pageExtent
         guard extent > 0 else { return }
-        let clamped = max(0, min(CGFloat(numberOfPages - 1), progress))
-        switch axis {
-        case .horizontal:
-            setContentOffset(CGPoint(x: clamped * extent, y: 0), animated: animated)
-        case .vertical:
-            setContentOffset(CGPoint(x: 0, y: clamped * extent), animated: animated)
-        }
+        let clamped = max(0, min(CGFloat(itemCount - 1), progress))
+        let point: CGPoint = (axis == .horizontal)
+            ? CGPoint(x: clamped * extent, y: 0)
+            : CGPoint(x: 0, y: clamped * extent)
+        setContentOffset(point, animated: animated)
     }
 
     public func appendPage() {
-        numberOfPages += 1
-        updateContentSize()
-        setNeedsLayout()
-        layoutIfNeeded()
+        itemCount += 1
+        let indexPath = IndexPath(item: itemCount - 1, section: 0)
+        insertItems(at: [indexPath])
     }
 
     public func deletePage(at index: Int, animated: Bool) async {
-        guard index >= 0, index < numberOfPages else { return }
-        let extent = pageExtent
-        guard extent > 0 else { return }
+        guard index >= 0, index < itemCount else { return }
+        let oldCurrent = currentPageIndex
+        itemCount -= 1
+        let indexPath = IndexPath(item: index, section: 0)
 
-        let isHorizontal = (axis == .horizontal)
-        let newCount = numberOfPages - 1
-        let deletedView = mountedPages[index]
-
-        var newMounted: [Int: UIView] = [:]
-        for (i, view) in mountedPages where i != index {
-            newMounted[i > index ? i - 1 : i] = view
-        }
-
-        var newCurrentIndex = currentPageIndex
-        var targetOffset = contentOffset
-        if currentPageIndex > index {
-            newCurrentIndex = currentPageIndex - 1
-            if isHorizontal { targetOffset.x -= extent } else { targetOffset.y -= extent }
-        } else if currentPageIndex == index && currentPageIndex >= newCount {
-            newCurrentIndex = max(0, newCount - 1)
-            if isHorizontal {
-                targetOffset = CGPoint(x: CGFloat(newCurrentIndex) * extent, y: 0)
-            } else {
-                targetOffset = CGPoint(x: 0, y: CGFloat(newCurrentIndex) * extent)
-            }
-        }
-
-        let targetContentSize: CGSize = isHorizontal
-            ? CGSize(width: extent * CGFloat(max(newCount, 0)), height: bounds.height)
-            : CGSize(width: bounds.width, height: extent * CGFloat(max(newCount, 0)))
-
-        isAnimatingMutation = true
-
-        let animate: @MainActor () -> Void = {
-            deletedView?.alpha = 0
-            deletedView?.transform = CGAffineTransform(scaleX: 0.85, y: 0.85)
-            for (newIdx, view) in newMounted {
-                view.frame = self.frame(forPageAt: newIdx)
-            }
-            self.contentOffset = targetOffset
-            self.contentSize = targetContentSize
+        var newCurrent = oldCurrent
+        if oldCurrent > index {
+            newCurrent = oldCurrent - 1
+        } else if oldCurrent == index && oldCurrent >= itemCount {
+            newCurrent = max(0, itemCount - 1)
         }
 
         if animated {
             await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                UIView.animate(withDuration: 0.3,
-                               delay: 0,
-                               options: [.curveEaseInOut, .beginFromCurrentState],
-                               animations: animate,
-                               completion: { _ in cont.resume() })
+                performBatchUpdates({
+                    self.deleteItems(at: [indexPath])
+                }, completion: { _ in cont.resume() })
             }
         } else {
-            animate()
+            performBatchUpdates({
+                self.deleteItems(at: [indexPath])
+            })
         }
 
-        deletedView?.removeFromSuperview()
-        deletedView?.alpha = 1
-        deletedView?.transform = .identity
-        mountedPages = newMounted
-        numberOfPages = newCount
-        currentPageIndex = newCurrentIndex
-        lastReportedPage = newCurrentIndex
-        visibleView = newMounted[newCurrentIndex]
-        isAnimatingMutation = false
-        setNeedsLayout()
-        layoutIfNeeded()
+        if newCurrent != oldCurrent, itemCount > 0 {
+            let extent = pageExtent
+            if extent > 0 {
+                let point: CGPoint = (axis == .horizontal)
+                    ? CGPoint(x: CGFloat(newCurrent) * extent, y: 0)
+                    : CGPoint(x: 0, y: CGFloat(newCurrent) * extent)
+                setContentOffset(point, animated: false)
+            }
+        }
+        currentPageIndex = newCurrent
+        lastReportedPage = newCurrent
     }
 
     public override func layoutSubviews() {
+        // 回転時に currentPageIndex を保持するために layout 側にヒントを渡しておく。
+        pagingLayout.preservedItemIndex = currentPageIndex
         super.layoutSubviews()
+    }
 
-        if bounds.size != lastBoundsSize {
-            lastBoundsSize = bounds.size
-            updateContentSize()
-            if numberOfPages > 0 {
-                let extent = pageExtent
-                switch axis {
-                case .horizontal:
-                    contentOffset = CGPoint(x: CGFloat(currentPageIndex) * extent, y: 0)
-                case .vertical:
-                    contentOffset = CGPoint(x: 0, y: CGFloat(currentPageIndex) * extent)
-                }
-            }
+    fileprivate func makeCell(at indexPath: IndexPath, in cv: UICollectionView) -> UICollectionViewCell {
+        let cell = cv.dequeueReusableCell(withReuseIdentifier: PageCell.reuseID, for: indexPath) as! PageCell
+        if let view = pageDataSource?.scrubView(self, viewForPageAt: indexPath.item) {
+            cell.host(view)
         }
+        return cell
+    }
 
-        guard !isAnimatingMutation else { return }
-
+    fileprivate func handleScroll() {
+        guard itemCount > 0 else { return }
         let extent = pageExtent
-        guard extent > 0, numberOfPages > 0 else { return }
-
+        guard extent > 0 else { return }
         let offset = (axis == .horizontal) ? contentOffset.x : contentOffset.y
-        let upperBound = CGFloat(max(numberOfPages - 1, 0))
-        let clamped = min(max(offset / extent, 0), upperBound)
-
+        let upper = CGFloat(max(itemCount - 1, 0))
+        let clamped = min(max(offset / extent, 0), upper)
         if clamped != progress {
             progress = clamped
             pageDelegate?.scrubView(self, didUpdateProgress: clamped)
         }
-
-        let centerIndex = max(0, min(numberOfPages - 1, Int(clamped.rounded())))
-        let keep = Set([centerIndex - 1, centerIndex, centerIndex + 1]
-            .filter { (0..<numberOfPages).contains($0) })
-
-        for (idx, view) in mountedPages where !keep.contains(idx) {
-            view.removeFromSuperview()
-            mountedPages.removeValue(forKey: idx)
-        }
-
-        for idx in keep where mountedPages[idx] == nil {
-            guard let dataSource = pageDataSource else { continue }
-            let view = dataSource.scrubView(self, viewForPageAt: idx)
-            view.frame = frame(forPageAt: idx)
-            addSubview(view)
-            mountedPages[idx] = view
-        }
-
-        for (idx, view) in mountedPages {
-            let expected = frame(forPageAt: idx)
-            if view.frame != expected {
-                view.frame = expected
-            }
-        }
-
-        if centerIndex != lastReportedPage {
-            lastReportedPage = centerIndex
-            currentPageIndex = centerIndex
-            visibleView = mountedPages[centerIndex]
-            pageDelegate?.scrubView(self, didChangeVisiblePage: centerIndex)
-        } else {
-            visibleView = mountedPages[centerIndex]
+        let newIndex = max(0, min(itemCount - 1, Int(clamped.rounded())))
+        if newIndex != lastReportedPage {
+            lastReportedPage = newIndex
+            currentPageIndex = newIndex
+            pageDelegate?.scrubView(self, didChangeVisiblePage: newIndex)
         }
     }
 
     private var pageExtent: CGFloat {
         axis == .horizontal ? bounds.width : bounds.height
     }
+}
 
-    private func updateContentSize() {
-        guard numberOfPages > 0 else {
-            contentSize = .zero
-            return
-        }
-        switch axis {
-        case .horizontal:
-            contentSize = CGSize(width: bounds.width * CGFloat(numberOfPages),
-                                 height: bounds.height)
-        case .vertical:
-            contentSize = CGSize(width: bounds.width,
-                                 height: bounds.height * CGFloat(numberOfPages))
-        }
+private final class PagingLayout: UICollectionViewFlowLayout {
+    var preservedItemIndex: Int = 0
+
+    override init() {
+        super.init()
+        minimumLineSpacing = 0
+        minimumInteritemSpacing = 0
+        sectionInset = .zero
+        scrollDirection = .horizontal
     }
 
-    private func handleAxisChange() {
-        for view in mountedPages.values {
-            view.removeFromSuperview()
-        }
-        mountedPages.removeAll()
-        lastReportedPage = -1
-        updateContentSize()
-        setContentOffset(.zero, animated: false)
-        setNeedsLayout()
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
     }
 
-    private func frame(forPageAt index: Int) -> CGRect {
-        switch axis {
-        case .horizontal:
-            return CGRect(x: bounds.width * CGFloat(index), y: 0,
-                          width: bounds.width, height: bounds.height)
-        case .vertical:
-            return CGRect(x: 0, y: bounds.height * CGFloat(index),
-                          width: bounds.width, height: bounds.height)
+    override func prepare() {
+        if let cv = collectionView, cv.bounds.size != .zero {
+            itemSize = cv.bounds.size
         }
+        super.prepare()
+    }
+
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
+        if let cv = collectionView, cv.bounds.size != newBounds.size { return true }
+        return false
+    }
+
+    override func invalidationContext(forBoundsChange newBounds: CGRect) -> UICollectionViewLayoutInvalidationContext {
+        let context = super.invalidationContext(forBoundsChange: newBounds)
+        guard let cv = collectionView, cv.bounds.size != newBounds.size else { return context }
+        let isH = scrollDirection == .horizontal
+        let newExtent = isH ? newBounds.width : newBounds.height
+        guard newExtent > 0 else { return context }
+        let newOffsetAlong = CGFloat(preservedItemIndex) * newExtent
+        let oldOffsetAlong = isH ? cv.contentOffset.x : cv.contentOffset.y
+        context.contentOffsetAdjustment = isH
+            ? CGPoint(x: newOffsetAlong - oldOffsetAlong, y: 0)
+            : CGPoint(x: 0, y: newOffsetAlong - oldOffsetAlong)
+        return context
+    }
+}
+
+private final class PageCell: UICollectionViewCell {
+    static let reuseID = "PhotoScrubberKit.PageCell"
+
+    weak var hostedView: UIView?
+
+    func host(_ view: UIView) {
+        hostedView?.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: contentView.topAnchor),
+            view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+        hostedView = view
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        hostedView?.removeFromSuperview()
+        hostedView = nil
+    }
+}
+
+@MainActor
+private final class ScrollProxy: NSObject, UICollectionViewDataSource, UICollectionViewDelegate {
+    weak var owner: CustomScrubView?
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        owner?.itemCount ?? 0
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        owner?.makeCell(at: indexPath, in: collectionView) ?? UICollectionViewCell()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        owner?.handleScroll()
     }
 }
