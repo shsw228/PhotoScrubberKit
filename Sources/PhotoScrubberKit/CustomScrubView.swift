@@ -80,6 +80,7 @@ public final class CustomScrubView: UICollectionView {
             ? CGPoint(x: CGFloat(index) * extent, y: 0)
             : CGPoint(x: 0, y: CGFloat(index) * extent)
         setContentOffset(point, animated: animated)
+        updateCurrentPage(to: index)
     }
 
     public func setProgress(_ progress: CGFloat, animated: Bool = false) {
@@ -91,6 +92,15 @@ public final class CustomScrubView: UICollectionView {
             ? CGPoint(x: clamped * extent, y: 0)
             : CGPoint(x: 0, y: clamped * extent)
         setContentOffset(point, animated: animated)
+        let intIndex = max(0, min(itemCount - 1, Int(clamped.rounded())))
+        updateCurrentPage(to: intIndex)
+    }
+
+    private func updateCurrentPage(to index: Int) {
+        guard index != lastReportedPage else { return }
+        lastReportedPage = index
+        currentPageIndex = index
+        pageDelegate?.scrubView(self, didChangeVisiblePage: index)
     }
 
     public func appendPage() {
@@ -138,38 +148,26 @@ public final class CustomScrubView: UICollectionView {
     }
 
     public override func layoutSubviews() {
-        // 回転等で bounds.size が変わると、UICollectionView の invalidationContext
-        // が contentOffset を補正してくれるはずだが、内部 auto-clamp や handleScroll の
-        // 発火タイミングで負けることがある。super 通過前の (oldOffset, oldExtent) から
-        // 「当時のページ」を逆算し、super 通過後に強制で復元する。
-        // currentPageIndex は handleScroll で書き換わる可能性があるので頼らない。
+        // 回転等で bounds.size が変わると UIKit が contentOffset を暗黙アニメで
+        // 補間しに来るので、super 通過前の `currentPageIndex` (handleScroll の
+        // gate で安定化済み) を使って新 bounds 上の正位置に強制復元する。
         let oldBoundsSize = lastObservedBoundsSize
-        let isH = (axis == .horizontal)
-        let oldOffsetAlong = isH ? contentOffset.x : contentOffset.y
-        let oldExtent = isH ? oldBoundsSize.width : oldBoundsSize.height
-
+        let preservedPage = currentPageIndex
         super.layoutSubviews()
-
-        if oldBoundsSize != .zero,
-           bounds.size != oldBoundsSize,
-           oldExtent > 0,
-           itemCount > 0 {
+        if oldBoundsSize != .zero, bounds.size != oldBoundsSize, itemCount > 0 {
             let newExtent = pageExtent
             if newExtent > 0 {
-                let pageIndex = Int((oldOffsetAlong / oldExtent).rounded())
-                let clamped = max(0, min(itemCount - 1, pageIndex))
-                let target: CGPoint = isH
-                    ? CGPoint(x: CGFloat(clamped) * newExtent, y: 0)
-                    : CGPoint(x: 0, y: CGFloat(clamped) * newExtent)
+                let target: CGPoint = (axis == .horizontal)
+                    ? CGPoint(x: CGFloat(preservedPage) * newExtent, y: 0)
+                    : CGPoint(x: 0, y: CGFloat(preservedPage) * newExtent)
                 let before = contentOffset
                 if contentOffset != target {
-                    log.notice("🔧 fallback restored: bounds \(NSCoder.string(for: oldBoundsSize)) → \(NSCoder.string(for: self.bounds.size)), offset \(NSCoder.string(for: before)) → \(NSCoder.string(for: target)) (page \(clamped))")
+                    log.notice("🔧 fallback restored: bounds \(NSCoder.string(for: oldBoundsSize)) → \(NSCoder.string(for: self.bounds.size)), offset \(NSCoder.string(for: before)) → \(NSCoder.string(for: target)) (page \(preservedPage))")
                     contentOffset = target
                 } else {
-                    log.notice("✅ fallback skip: already at target \(NSCoder.string(for: target)) (page \(clamped))")
+                    log.notice("✅ fallback skip: already at target \(NSCoder.string(for: target)) (page \(preservedPage))")
                 }
-                currentPageIndex = clamped
-                lastReportedPage = clamped
+                lastReportedPage = preservedPage
             }
         }
         lastObservedBoundsSize = bounds.size
@@ -194,6 +192,12 @@ public final class CustomScrubView: UICollectionView {
             progress = clamped
             pageDelegate?.scrubView(self, didUpdateProgress: clamped)
         }
+        // currentPageIndex はユーザー由来 / setProgress(animated:true) によるスクロール時のみ更新。
+        // 回転で UIKit が contentOffset を暗黙アニメする間は更新しない (中間値を信じてしまうと
+        // currentPageIndex が壊れる)。
+        let isUserDriven = isTracking || isDragging || isDecelerating
+        guard isUserDriven else { return }
+
         let newIndex = max(0, min(itemCount - 1, Int(clamped.rounded())))
         if newIndex != lastReportedPage {
             lastReportedPage = newIndex
