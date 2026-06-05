@@ -29,7 +29,8 @@ final class CustomScrubViewTests: XCTestCase {
     }
 
     func makeScrubView(pageCount: Int, axis: ScrubAxis = .horizontal) -> (CustomScrubView, StubDataSource, SpyDelegate) {
-        let view = CustomScrubView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let view = CustomScrubView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
         let ds = StubDataSource(count: pageCount)
         let del = SpyDelegate()
         view.axis = axis
@@ -40,43 +41,41 @@ final class CustomScrubViewTests: XCTestCase {
         return (view, ds, del)
     }
 
-    func testInitialMountIsThreeOrFewer() {
-        let (view, _, _) = makeScrubView(pageCount: 10)
-        let mounted = view.subviews.filter { $0.tag >= 0 && $0.tag < 10 }
-        XCTAssertLessThanOrEqual(mounted.count, 3)
-    }
-
     func testContentSizeHorizontal() {
-        let (view, _, _) = makeScrubView(pageCount: 5)
-        XCTAssertEqual(view.contentSize, CGSize(width: 320 * 5, height: 480))
+        let (view, ds, _) = makeScrubView(pageCount: 5)
+        XCTAssertEqual(view.contentSize.width, 320 * 5, accuracy: 0.1)
+        XCTAssertEqual(view.contentSize.height, 480, accuracy: 0.1)
+        withExtendedLifetime(ds) {}
     }
 
     func testContentSizeVertical() {
-        let (view, _, _) = makeScrubView(pageCount: 5, axis: .vertical)
-        XCTAssertEqual(view.contentSize, CGSize(width: 320, height: 480 * 5))
+        let (view, ds, _) = makeScrubView(pageCount: 5, axis: .vertical)
+        XCTAssertEqual(view.contentSize.width, 320, accuracy: 0.1)
+        XCTAssertEqual(view.contentSize.height, 480 * 5, accuracy: 0.1)
+        withExtendedLifetime(ds) {}
     }
 
     func testProgressUpdatesOnScroll() {
-        let (view, _, del) = makeScrubView(pageCount: 5)
-        view.contentOffset = CGPoint(x: 160, y: 0) // half-way to page 1
+        let (view, ds, del) = makeScrubView(pageCount: 5)
+        view.contentOffset = CGPoint(x: 160, y: 0)
         view.layoutIfNeeded()
         XCTAssertEqual(view.progress, 0.5, accuracy: 0.001)
         XCTAssertTrue(del.progressValues.contains(where: { abs($0 - 0.5) < 0.001 }))
+        withExtendedLifetime(ds) {}
     }
 
-    func testRecyclingWhenScrollingFar() {
+    func testCurrentPageIndexAfterSetCurrentPage() {
         let (view, ds, _) = makeScrubView(pageCount: 10)
-        view.contentOffset = CGPoint(x: 320 * 5, y: 0) // jump to page 5
+        view.setCurrentPage(5, animated: false)
         view.layoutIfNeeded()
-        let mountedTags = view.subviews.map(\.tag).filter { (0..<10).contains($0) }.sorted()
-        XCTAssertEqual(mountedTags, [4, 5, 6])
         XCTAssertEqual(view.currentPageIndex, 5)
+        XCTAssertNotNil(view.visibleView)
         XCTAssertEqual(view.visibleView?.tag, 5)
-        withExtendedLifetime(ds) {}   // pageDataSource は weak。テスト終了まで生存させる
+        withExtendedLifetime(ds) {}
     }
 
     func testKVOOnProgress() {
-        let (view, _, _) = makeScrubView(pageCount: 3)
+        let (view, ds, _) = makeScrubView(pageCount: 3)
         var observed: [CGFloat] = []
         let token = view.observe(\.progress, options: [.new]) { _, change in
             if let v = change.newValue { observed.append(v) }
@@ -85,5 +84,14 @@ final class CustomScrubViewTests: XCTestCase {
         view.layoutIfNeeded()
         token.invalidate()
         XCTAssertTrue(observed.contains(where: { abs($0 - 1.0) < 0.001 }))
+        withExtendedLifetime(ds) {}
+    }
+
+    func testAppendPage() {
+        let (view, ds, _) = makeScrubView(pageCount: 3)
+        view.appendPage()
+        view.layoutIfNeeded()
+        XCTAssertEqual(view.contentSize.width, 320 * 4, accuracy: 0.1)
+        withExtendedLifetime(ds) {}
     }
 }

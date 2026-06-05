@@ -37,15 +37,15 @@ public final class PhotoScrubberCoupling {
     private let forwardingProxy = ForwardingProxy()
     private var isProgrammaticUpdate = false
 
-    public init(scrubView: CustomScrubView = CustomScrubView(),
-                stripView: ScrubberStripView = ScrubberStripView()) {
-        self.scrubView = scrubView
-        self.stripView = stripView
+    public init(scrubView: CustomScrubView? = nil,
+                stripView: ScrubberStripView? = nil) {
+        self.scrubView = scrubView ?? CustomScrubView()
+        self.stripView = stripView ?? ScrubberStripView()
         forwardingProxy.owner = self
-        scrubView.pageDataSource = forwardingProxy
-        scrubView.pageDelegate = forwardingProxy
-        stripView.thumbnailDataSource = forwardingProxy
-        stripView.stripDelegate = forwardingProxy
+        self.scrubView.pageDataSource = forwardingProxy
+        self.scrubView.pageDelegate = forwardingProxy
+        self.stripView.thumbnailDataSource = forwardingProxy
+        self.stripView.stripDelegate = forwardingProxy
     }
 
     public func reloadData() {
