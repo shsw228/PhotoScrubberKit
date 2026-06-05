@@ -2,43 +2,31 @@ import SwiftUI
 import PhotoScrubberKit
 
 struct ContentView: View {
-    enum Edge: Hashable { case top, bottom, leading, trailing }
-
-    @State private var itemSeeds: [Int] = Array(0..<12)
-    @State private var progress: CGFloat = 0
-    @State private var currentItem: Int = 0
-    @State private var deleteRequest: Int? = nil
-    @State private var stripEdge: Edge = .bottom
-    @State private var stripFloating: Bool = false
-
-    private var stripPosition: PhotoScrubberView.StripPosition {
-        switch (stripEdge, stripFloating) {
-        case (.top, false):      return .top
-        case (.bottom, false):   return .bottom
-        case (.leading, false):  return .leading
-        case (.trailing, false): return .trailing
-        case (.top, true):       return .floatingTop
-        case (.bottom, true):    return .floatingBottom
-        case (.leading, true):   return .floatingLeading
-        case (.trailing, true):  return .floatingTrailing
-        }
-    }
+    @StateObject private var store = ScrubberStore()
+    @State private var floating = false
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            PhotoScrubberRepresentable(
-                itemSeeds: itemSeeds,
-                stripPosition: stripPosition,
-                progress: $progress,
-                currentItem: $currentItem,
-                deleteRequest: $deleteRequest
-            )
+            // Layout は SwiftUI 側で決める。ライブラリは scrubView / stripView を素のまま渡してくる。
+            if floating {
+                ZStack(alignment: .bottom) {
+                    UIViewBridge(view: store.coupling.scrubView)
+                    UIViewBridge(view: store.coupling.stripView)
+                        .frame(height: 96)
+                        .padding(.bottom, 24)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    UIViewBridge(view: store.coupling.scrubView)
+                    UIViewBridge(view: store.coupling.stripView)
+                        .frame(height: 96)
+                }
+            }
 
             VStack(spacing: 8) {
                 header
-                edgePicker
                 floatingToggle
                 HStack(spacing: 12) {
                     deleteButton
@@ -49,13 +37,14 @@ struct ContentView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
         }
+        .task { store.setupIfNeeded() }
     }
 
     private var header: some View {
         HStack {
-            Text(String(format: "item %d / %d", currentItem, max(itemSeeds.count - 1, 0)))
+            Text(String(format: "item %d / %d", store.currentItem, max(store.itemSeeds.count - 1, 0)))
             Spacer()
-            Text(String(format: "progress %.3f", progress))
+            Text(String(format: "progress %.3f", store.progress))
         }
         .font(.system(.footnote, design: .monospaced).weight(.medium))
         .foregroundStyle(.white)
@@ -64,19 +53,8 @@ struct ContentView: View {
         .background(.black.opacity(0.5), in: Capsule())
     }
 
-    private var edgePicker: some View {
-        Picker("Edge", selection: $stripEdge) {
-            Text("Top").tag(Edge.top)
-            Text("Bottom").tag(Edge.bottom)
-            Text("Leading").tag(Edge.leading)
-            Text("Trailing").tag(Edge.trailing)
-        }
-        .pickerStyle(.segmented)
-        .colorScheme(.dark)
-    }
-
     private var floatingToggle: some View {
-        Toggle(isOn: $stripFloating) {
+        Toggle(isOn: $floating) {
             Text("Floating")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.white)
@@ -89,7 +67,7 @@ struct ContentView: View {
 
     private var deleteButton: some View {
         Button {
-            deleteCurrent()
+            store.deleteCurrent()
         } label: {
             Label("Delete", systemImage: "trash")
                 .font(.callout.weight(.semibold))
@@ -98,12 +76,12 @@ struct ContentView: View {
                 .background(.red.opacity(0.85), in: Capsule())
                 .foregroundStyle(.white)
         }
-        .disabled(itemSeeds.isEmpty)
+        .disabled(store.itemSeeds.isEmpty)
     }
 
     private var appendButton: some View {
         Button {
-            appendItem()
+            store.appendItem()
         } label: {
             Label("Append", systemImage: "plus")
                 .font(.callout.weight(.semibold))
@@ -112,18 +90,6 @@ struct ContentView: View {
                 .background(.green.opacity(0.85), in: Capsule())
                 .foregroundStyle(.white)
         }
-    }
-
-    private func deleteCurrent() {
-        guard !itemSeeds.isEmpty else { return }
-        let index = min(max(currentItem, 0), itemSeeds.count - 1)
-        itemSeeds.remove(at: index)
-        deleteRequest = index
-    }
-
-    private func appendItem() {
-        let nextSeed = (itemSeeds.max() ?? -1) + 1
-        itemSeeds.append(nextSeed)
     }
 }
 
