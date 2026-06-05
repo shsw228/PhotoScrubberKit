@@ -26,6 +26,13 @@ public final class PhotoScrubberCoupling {
 
     public weak var dataSource: (any PhotoScrubberDataSource)?
     public weak var delegate: (any PhotoScrubberDelegate)?
+    public weak var prefetcher: (any PhotoScrubberPrefetching)?
+
+    /// `didChangeVisibleItem` 発火時に現在 index ± `mainPrefetchRadius` を main 用 prefetch として通知。
+    public var mainPrefetchRadius: Int = 2
+
+    /// 同上、thumbnail 用。
+    public var thumbnailPrefetchRadius: Int = 5
 
     private let forwardingProxy = ForwardingProxy()
     private var isProgrammaticUpdate = false
@@ -70,6 +77,29 @@ public final class PhotoScrubberCoupling {
 
     fileprivate func mainDidChangeVisibleItem(_ index: Int) {
         delegate?.photoScrubber(self, didChangeVisibleItem: index)
+        firePrefetch(around: index)
+    }
+
+    private func firePrefetch(around index: Int) {
+        guard let prefetcher else { return }
+        let count = dataSource?.numberOfItems(in: self) ?? 0
+        guard count > 0 else { return }
+        let mainIndices = prefetchIndices(around: index, radius: mainPrefetchRadius, count: count)
+        if !mainIndices.isEmpty {
+            prefetcher.photoScrubber(self, prefetchItemsFor: mainIndices, kind: .main)
+        }
+        let thumbIndices = prefetchIndices(around: index, radius: thumbnailPrefetchRadius, count: count)
+        if !thumbIndices.isEmpty {
+            prefetcher.photoScrubber(self, prefetchItemsFor: thumbIndices, kind: .thumbnail)
+        }
+    }
+
+    private func prefetchIndices(around index: Int, radius: Int, count: Int) -> [Int] {
+        guard radius > 0, count > 0 else { return [] }
+        let start = max(0, index - radius)
+        let end = min(count - 1, index + radius)
+        guard start <= end else { return [] }
+        return Array(start...end).filter { $0 != index }
     }
 
     fileprivate func stripDidUpdateProgress(_ progress: CGFloat) {

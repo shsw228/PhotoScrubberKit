@@ -1,6 +1,9 @@
 import SwiftUI
 import UIKit
+import OSLog
 import PhotoScrubberKit
+
+private let log = Logger(subsystem: "dev.hume.PhotoScrubberKitPlayground", category: "scrubber")
 
 struct PhotoScrubberRepresentable: UIViewRepresentable {
     let itemSeeds: [Int]
@@ -25,6 +28,7 @@ struct PhotoScrubberRepresentable: UIViewRepresentable {
         view.stripView.selectedThumbnailPadding = 16
         view.coupling.dataSource = context.coordinator
         view.coupling.delegate = context.coordinator
+        view.coupling.prefetcher = context.coordinator
         Task {
             view.coupling.reloadData()
         }
@@ -61,13 +65,15 @@ struct PhotoScrubberRepresentable: UIViewRepresentable {
         uiView.coupling.reloadData()
     }
 
-    final class Coordinator: NSObject, PhotoScrubberDataSource, PhotoScrubberDelegate {
+    final class Coordinator: NSObject, PhotoScrubberDataSource, PhotoScrubberDelegate, PhotoScrubberPrefetching {
         var itemSeeds: [Int]
         @Binding var progress: CGFloat
         @Binding var currentItem: Int
 
         private var mainImageCache: [Int: UIImage] = [:]
         private var thumbImageCache: [Int: UIImage] = [:]
+        private var inflightMain: [Int: Task<UIImage?, Never>] = [:]
+        private var inflightThumb: [Int: Task<UIImage?, Never>] = [:]
 
         init(itemSeeds: [Int], progress: Binding<CGFloat>, currentItem: Binding<Int>) {
             self.itemSeeds = itemSeeds
@@ -79,6 +85,8 @@ struct PhotoScrubberRepresentable: UIViewRepresentable {
 
         func photoScrubber(_ coupling: PhotoScrubberCoupling, mainViewAt index: Int) -> UIView {
             let seed = itemSeeds[index]
+            let cached = mainImageCache[seed] != nil
+            log.info("📷 mainViewAt index=\(index) seed=\(seed) cached=\(cached)")
             let imageView = UIImageView()
             imageView.contentMode = .scaleAspectFit
             imageView.backgroundColor = .black
@@ -91,6 +99,8 @@ struct PhotoScrubberRepresentable: UIViewRepresentable {
 
         func photoScrubber(_ coupling: PhotoScrubberCoupling, thumbnailViewAt index: Int) -> UIView {
             let seed = itemSeeds[index]
+            let cached = thumbImageCache[seed] != nil
+            log.info("🖼  thumbViewAt index=\(index) seed=\(seed) cached=\(cached)")
             let imageView = UIImageView()
             imageView.contentMode = .scaleAspectFill
             imageView.backgroundColor = UIColor(white: 0.15, alpha: 1)
@@ -115,30 +125,69 @@ struct PhotoScrubberRepresentable: UIViewRepresentable {
             }
         }
 
+        func photoScrubber(_ coupling: PhotoScrubberCoupling, prefetchItemsFor indices: [Int], kind: PhotoScrubberItemKind) {
+            let seeds = indices.compactMap { itemSeeds.indices.contains($0) ? itemSeeds[$0] : nil }
+            log.notice("⬇️  prefetch kind=\(String(describing: kind)) indices=\(indices) seeds=\(seeds)")
+            for seed in seeds {
+                switch kind {
+                case .main:
+                    Task { [weak self] in _ = await self?.loadMainImage(seed: seed) }
+                case .thumbnail:
+                    Task { [weak self] in _ = await self?.loadThumbImage(seed: seed) }
+                }
+            }
+        }
+
         private func loadMainImage(seed: Int) async -> UIImage? {
             if let cached = mainImageCache[seed] { return cached }
-            guard let url = URL(string: "https://picsum.photos/seed/scrubkit-\(seed)/800/1200") else { return nil }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                let image = UIImage(data: data)
-                if let image { mainImageCache[seed] = image }
-                return image
-            } catch {
-                return nil
+            if let existing = inflightMain[seed] {
+                log.debug("⏸  main reuse-inflight seed=\(seed)")
+                return await existing.value
             }
+            let task = Task<UIImage?, Never> {
+                guard let url = URL(string: "https://picsum.photos/seed/scrubkit-\(seed)/800/1200") else { return nil }
+                log.debug("🌐 main GET seed=\(seed)")
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: url)
+                    let image = UIImage(data: data)
+                    if let image { log.debug("✅ main loaded seed=\(seed)") }
+                    return image
+                } catch {
+                    log.error("❌ main failed seed=\(seed) error=\(error.localizedDescription)")
+                    return nil
+                }
+            }
+            inflightMain[seed] = task
+            let image = await task.value
+            inflightMain[seed] = nil
+            if let image { mainImageCache[seed] = image }
+            return image
         }
 
         private func loadThumbImage(seed: Int) async -> UIImage? {
             if let cached = thumbImageCache[seed] { return cached }
-            guard let url = URL(string: "https://picsum.photos/seed/scrubkit-\(seed)/120/120") else { return nil }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                let image = UIImage(data: data)
-                if let image { thumbImageCache[seed] = image }
-                return image
-            } catch {
-                return nil
+            if let existing = inflightThumb[seed] {
+                log.debug("⏸  thumb reuse-inflight seed=\(seed)")
+                return await existing.value
             }
+            let task = Task<UIImage?, Never> {
+                guard let url = URL(string: "https://picsum.photos/seed/scrubkit-\(seed)/120/120") else { return nil }
+                log.debug("🌐 thumb GET seed=\(seed)")
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: url)
+                    let image = UIImage(data: data)
+                    if let image { log.debug("✅ thumb loaded seed=\(seed)") }
+                    return image
+                } catch {
+                    log.error("❌ thumb failed seed=\(seed) error=\(error.localizedDescription)")
+                    return nil
+                }
+            }
+            inflightThumb[seed] = task
+            let image = await task.value
+            inflightThumb[seed] = nil
+            if let image { thumbImageCache[seed] = image }
+            return image
         }
     }
 }
