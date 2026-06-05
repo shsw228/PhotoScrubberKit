@@ -140,25 +140,36 @@ public final class CustomScrubView: UICollectionView {
     public override func layoutSubviews() {
         // 回転等で bounds.size が変わると、UICollectionView の invalidationContext
         // が contentOffset を補正してくれるはずだが、内部 auto-clamp や handleScroll の
-        // 発火タイミングで負けることがあるので、super 通過後に強制で復元する。
+        // 発火タイミングで負けることがある。super 通過前の (oldOffset, oldExtent) から
+        // 「当時のページ」を逆算し、super 通過後に強制で復元する。
+        // currentPageIndex は handleScroll で書き換わる可能性があるので頼らない。
         let oldBoundsSize = lastObservedBoundsSize
-        let preservedIndex = currentPageIndex
+        let isH = (axis == .horizontal)
+        let oldOffsetAlong = isH ? contentOffset.x : contentOffset.y
+        let oldExtent = isH ? oldBoundsSize.width : oldBoundsSize.height
+
         super.layoutSubviews()
-        if oldBoundsSize != .zero, bounds.size != oldBoundsSize, itemCount > 0 {
-            let extent = pageExtent
-            if extent > 0 {
-                let target: CGPoint = (axis == .horizontal)
-                    ? CGPoint(x: CGFloat(preservedIndex) * extent, y: 0)
-                    : CGPoint(x: 0, y: CGFloat(preservedIndex) * extent)
+
+        if oldBoundsSize != .zero,
+           bounds.size != oldBoundsSize,
+           oldExtent > 0,
+           itemCount > 0 {
+            let newExtent = pageExtent
+            if newExtent > 0 {
+                let pageIndex = Int((oldOffsetAlong / oldExtent).rounded())
+                let clamped = max(0, min(itemCount - 1, pageIndex))
+                let target: CGPoint = isH
+                    ? CGPoint(x: CGFloat(clamped) * newExtent, y: 0)
+                    : CGPoint(x: 0, y: CGFloat(clamped) * newExtent)
                 let before = contentOffset
                 if contentOffset != target {
-                    log.notice("🔧 layoutSubviews fallback: bounds \(NSCoder.string(for: oldBoundsSize)) → \(NSCoder.string(for: self.bounds.size)), offset \(NSCoder.string(for: before)) → \(NSCoder.string(for: target)) (idx=\(preservedIndex))")
+                    log.notice("🔧 fallback restored: bounds \(NSCoder.string(for: oldBoundsSize)) → \(NSCoder.string(for: self.bounds.size)), offset \(NSCoder.string(for: before)) → \(NSCoder.string(for: target)) (page \(clamped))")
                     contentOffset = target
                 } else {
-                    log.notice("✅ layoutSubviews fallback: bounds changed but offset already at target \(NSCoder.string(for: target)) (idx=\(preservedIndex)) — invalidationContext did the work")
+                    log.notice("✅ fallback skip: already at target \(NSCoder.string(for: target)) (page \(clamped))")
                 }
-                currentPageIndex = preservedIndex
-                lastReportedPage = preservedIndex
+                currentPageIndex = clamped
+                lastReportedPage = clamped
             }
         }
         lastObservedBoundsSize = bounds.size
