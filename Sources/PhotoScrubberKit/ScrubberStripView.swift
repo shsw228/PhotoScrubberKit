@@ -23,9 +23,9 @@ public final class ScrubberStripView: UICollectionView {
             guard oldValue != axis else { return }
             stripLayout.scrollDirection = (axis == .horizontal) ? .horizontal : .vertical
             stripLayout.invalidateLayout()
-            setContentOffset(.zero, animated: false)
             progress = 0
             relayoutContentInset()
+            resetContentOffsetForProgress(0)
         }
     }
 
@@ -100,6 +100,7 @@ public final class ScrubberStripView: UICollectionView {
         progress = 0
         super.reloadData()
         relayoutContentInset()
+        resetContentOffsetForProgress(0)
     }
 
     public func setProgress(_ progress: CGFloat, animated: Bool = false) {
@@ -142,28 +143,31 @@ public final class ScrubberStripView: UICollectionView {
     }
 
     public override func layoutSubviews() {
-        // 回転で bounds.size が変わると UIKit が contentOffset を暗黙アニメで触ってくる。
-        // super 通過前の progress (handleScroll を user-driven gate して安定化済み) で
-        // 新 bounds 上の正位置に強制復元する。
+        // 初回 layout / 回転で bounds.size が変わると、UIKit が contentOffset を
+        // 暗黙アニメで触ったり .zero のまま放置したりするので、super 通過前の
+        // progress (handleScroll を user-driven gate して安定化済み) で新 bounds
+        // 上の正位置に強制復元する。
         let oldBoundsSize = lastObservedBoundsSize
         let preservedProgress = progress
         super.layoutSubviews()
-        if oldBoundsSize != .zero, bounds.size != oldBoundsSize {
+        if bounds.size != oldBoundsSize, bounds.size != .zero {
             relayoutContentInset()
-            if itemCount > 0 {
-                let mainExtent = pageExtent
-                if mainExtent > 0 {
-                    let target = stripLayout.offsetForProgress(preservedProgress, mainExtent: mainExtent)
-                    let point: CGPoint = isHorizontal
-                        ? CGPoint(x: target, y: 0)
-                        : CGPoint(x: 0, y: target)
-                    if contentOffset != point {
-                        contentOffset = point
-                    }
-                }
-            }
+            resetContentOffsetForProgress(preservedProgress)
         }
         lastObservedBoundsSize = bounds.size
+    }
+
+    private func resetContentOffsetForProgress(_ progress: CGFloat) {
+        guard itemCount > 0 else { return }
+        let mainExtent = pageExtent
+        guard mainExtent > 0 else { return }
+        let target = stripLayout.offsetForProgress(progress, mainExtent: mainExtent)
+        let point: CGPoint = isHorizontal
+            ? CGPoint(x: target, y: 0)
+            : CGPoint(x: 0, y: target)
+        if contentOffset != point {
+            contentOffset = point
+        }
     }
 
     fileprivate func makeCell(at indexPath: IndexPath, in cv: UICollectionView) -> UICollectionViewCell {
