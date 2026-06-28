@@ -1,5 +1,12 @@
 # PhotoScrubberKit
 
+[![Release](https://img.shields.io/github/v/release/shsw228/PhotoScrubberKit?sort=semver&label=release)](https://github.com/shsw228/PhotoScrubberKit/releases/latest)
+[![CI](https://github.com/shsw228/PhotoScrubberKit/actions/workflows/ci.yml/badge.svg)](https://github.com/shsw228/PhotoScrubberKit/actions/workflows/ci.yml)
+[![Documentation](https://github.com/shsw228/PhotoScrubberKit/actions/workflows/documentation.yml/badge.svg)](https://shsw228.github.io/PhotoScrubberKit/documentation/photoscrubberkit/)
+[![Platform](https://img.shields.io/badge/platform-iOS%2016%2B-blue)](#requirements)
+[![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)](#requirements)
+[![License](https://img.shields.io/github/license/shsw228/PhotoScrubberKit)](LICENSE)
+
 UIKit 製の Apple Photos.app 風スクラバー UI（メイン画像 + サムネイル帯の双方向連動）を提供する Swift Package。
 **レイアウトは呼び出し側の責務**。ライブラリは 2 つの UIView と結合ロジックを提供するだけ。
 
@@ -73,6 +80,11 @@ func photoScrubber(_ coupling: PhotoScrubberCoupling,
 ## Demo
 
 `PhotoScrubberKitPlayground.swiftpm` を Xcode で開いて実機/シミュレータで Run。SwiftUI で VStack/ZStack を切り替えるサンプル付き。
+
+## Documentation
+
+API リファレンス（DocC、GitHub Pages へ自動公開）:
+<https://shsw228.github.io/PhotoScrubberKit/documentation/photoscrubberkit/>
 
 ## License
 

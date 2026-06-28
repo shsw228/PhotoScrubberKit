@@ -1,0 +1,67 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    # Only rebuild docs when the library (or this workflow) changes — not on
+    # README / sample / asset edits.
+    paths:
+      - 'Sources/**'
+      - 'Package.swift'
+      - '.github/workflows/documentation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show selected Xcode
+        run: |
+          xcode-select -p
+          xcodebuild -version
+
+      - name: Build DocC archive
+        run: |
+          xcodebuild docbuild \
+            -scheme PhotoScrubberKit \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .derivedData
+
+      - name: Transform for static hosting
+        run: |
+          ARCHIVE="$(find .derivedData -name 'PhotoScrubberKit.doccarchive' -type d | head -1)"
+          "$(xcrun --find docc)" process-archive transform-for-static-hosting \
+            "$ARCHIVE" \
+            --output-path _site \
+            --hosting-base-path PhotoScrubberKit
+          # Redirect the site root to the module's documentation landing page.
+          echo '<script>window.location.href += "documentation/photoscrubberkit/"</script>' > _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
