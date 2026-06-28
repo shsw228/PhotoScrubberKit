@@ -1,13 +1,24 @@
 import UIKit
 
+/// スクラブのスクロール方向。
 public enum ScrubAxis: Sendable {
+    /// 横方向にページング／スクロールする。
     case horizontal
+    /// 縦方向にページング／スクロールする。
     case vertical
 }
 
+/// メイン画像用の paging スクラブビュー。
+///
+/// `UICollectionView` ベースで 1 ページ = 1 item を全面表示する。スクロールに応じて
+/// ``progress`` を更新し、``CustomScrubViewDelegate`` へ進行度・ページ変化を通知する。
+/// 回転で bounds が変わっても表示ページを保持する。
+///
+/// 単体でも使えるが、サムネイル帯と連動させるなら ``PhotoScrubberCoupling`` を使う。
 @MainActor
 public final class CustomScrubView: UICollectionView {
 
+    /// スクロール方向。変更すると先頭ページへリセットされる。既定は ``ScrubAxis/horizontal``。
     public var axis: ScrubAxis = .horizontal {
         didSet {
             guard oldValue != axis else { return }
@@ -20,12 +31,17 @@ public final class CustomScrubView: UICollectionView {
         }
     }
 
+    /// ページ数と各ページの view を供給するデータソース。
     public weak var pageDataSource: (any CustomScrubViewDataSource)?
+    /// 進行度・表示ページ変化の通知先。
     public weak var pageDelegate: (any CustomScrubViewDelegate)?
 
+    /// 現在の進行度。`0...(pageCount - 1)` の連続値。KVO 可能 (`@objc dynamic`)。
     @objc dynamic public private(set) var progress: CGFloat = 0
+    /// 現在表示中のページ index。
     public private(set) var currentPageIndex: Int = 0
 
+    /// 現在表示中ページにホストされている view。該当が無ければ `nil`。
     public var visibleView: UIView? {
         guard itemCount > 0 else { return nil }
         let indexPath = IndexPath(item: currentPageIndex, section: 0)
@@ -61,6 +77,7 @@ public final class CustomScrubView: UICollectionView {
         register(PageCell.self, forCellWithReuseIdentifier: PageCell.reuseID)
     }
 
+    /// データソースを読み直し、先頭ページへリセットする。
     public override func reloadData() {
         itemCount = pageDataSource?.numberOfPages(in: self) ?? 0
         currentPageIndex = 0
@@ -69,6 +86,10 @@ public final class CustomScrubView: UICollectionView {
         super.reloadData()
     }
 
+    /// 指定ページへ移動する。
+    /// - Parameters:
+    ///   - index: 移動先ページ index。範囲外なら無視される。
+    ///   - animated: アニメーション付きで移動するか。
     public func setCurrentPage(_ index: Int, animated: Bool) {
         guard index >= 0, index < itemCount else { return }
         let extent = pageExtent
@@ -80,6 +101,10 @@ public final class CustomScrubView: UICollectionView {
         updateCurrentPage(to: index)
     }
 
+    /// 進行度を直接指定して位置を合わせる。主に連動相手からの同期に使う。
+    /// - Parameters:
+    ///   - progress: `0...(pageCount - 1)` の連続値。範囲外は丸められる。
+    ///   - animated: アニメーション付きで移動するか。既定 `false`。
     public func setProgress(_ progress: CGFloat, animated: Bool = false) {
         guard itemCount > 0 else { return }
         let extent = pageExtent
@@ -100,12 +125,17 @@ public final class CustomScrubView: UICollectionView {
         pageDelegate?.scrubView(self, didChangeVisiblePage: index)
     }
 
+    /// 末尾にページを 1 つ追加する。追加分の view は ``pageDataSource`` から取得される。
     public func appendPage() {
         itemCount += 1
         let indexPath = IndexPath(item: itemCount - 1, section: 0)
         insertItems(at: [indexPath])
     }
 
+    /// 指定ページを削除し、必要なら表示ページを補正する。
+    /// - Parameters:
+    ///   - index: 削除するページ index。範囲外なら無視される。
+    ///   - animated: アニメーション付きで削除するか。`true` の場合は完了まで `await` で待つ。
     public func deletePage(at index: Int, animated: Bool) async {
         guard index >= 0, index < itemCount else { return }
         let oldCurrent = currentPageIndex

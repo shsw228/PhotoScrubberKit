@@ -1,13 +1,20 @@
 import UIKit
 
+/// ``ScrubberStripView`` にサムネイル数と各サムネイルの view を供給するデータソース。
+///
+/// ``PhotoScrubberCoupling`` 経由で使う場合は ``PhotoScrubberDataSource`` を実装する。
 @MainActor
 public protocol ScrubberThumbnailDataSource: AnyObject {
+    /// サムネイル総数。
     func numberOfThumbnails(in stripView: ScrubberStripView) -> Int
+    /// `index` 番目のサムネイルに表示する view を返す。
     func stripView(_ stripView: ScrubberStripView, thumbnailViewAt index: Int) -> UIView
 }
 
+/// ストリップのスクラブ進行度変化を受け取るデリゲート。メソッドは任意実装。
 @MainActor
 public protocol ScrubberStripViewDelegate: AnyObject {
+    /// ユーザー操作で進行度が変化したとき呼ばれる。`progress` は `0...(itemCount - 1)` の連続値。
     func stripView(_ stripView: ScrubberStripView, didUpdateProgress progress: CGFloat)
 }
 
@@ -15,9 +22,17 @@ public extension ScrubberStripViewDelegate {
     func stripView(_ stripView: ScrubberStripView, didUpdateProgress progress: CGFloat) {}
 }
 
+/// サムネイル帯のストリップビュー。
+///
+/// `UICollectionView` ＋自作レイアウトで、現在位置のサムネイルを大きく、周辺を小さく表示する
+/// Photos.app 風の補間表示を行う。進行度に応じて各サムネイルの長さ・間隔を連続変化させる。
+/// 各種寸法プロパティで見た目を調整できる。
+///
+/// メインビューと連動させるなら ``PhotoScrubberCoupling`` を使う。
 @MainActor
 public final class ScrubberStripView: UICollectionView {
 
+    /// スクロール方向。変更すると進行度がリセットされる。既定は ``ScrubAxis/horizontal``。
     public var axis: ScrubAxis = .horizontal {
         didSet {
             guard oldValue != axis else { return }
@@ -29,33 +44,42 @@ public final class ScrubberStripView: UICollectionView {
         }
     }
 
+    /// 選択（中央）状態のサムネイルの長さ（スクロール軸方向）。既定 `56`。
     public var selectedThumbnailLength: CGFloat = 56 {
         didSet { propagate(\.selectedLength, value: selectedThumbnailLength, oldValue: oldValue) }
     }
 
+    /// 非選択サムネイルの長さ（スクロール軸方向）。既定 `16`。
     public var unselectedThumbnailLength: CGFloat = 16 {
         didSet { propagate(\.unselectedLength, value: unselectedThumbnailLength, oldValue: oldValue) }
     }
 
+    /// サムネイルの幅（スクロール軸と直交する方向）。既定 `56`。
     public var thumbnailBreadth: CGFloat = 56 {
         didSet { propagate(\.breadth, value: thumbnailBreadth, oldValue: oldValue) }
     }
 
+    /// サムネイル間の基本間隔。既定 `4`。
     public var thumbnailGap: CGFloat = 4 {
         didSet { propagate(\.gap, value: thumbnailGap, oldValue: oldValue) }
     }
 
+    /// 選択サムネイルの左右に追加される余白。既定 `12`。
     public var selectedThumbnailPadding: CGFloat = 12 {
         didSet { propagate(\.selectedPadding, value: selectedThumbnailPadding, oldValue: oldValue) }
     }
 
+    /// スクロール停止時に最寄りサムネイルへスナップするか。既定 `true`。
     public var snapsToNearestThumbnail: Bool = true {
         didSet { stripLayout.snapsToNearestItem = snapsToNearestThumbnail }
     }
 
+    /// サムネイル数と各サムネイルの view を供給するデータソース。
     public weak var thumbnailDataSource: (any ScrubberThumbnailDataSource)?
+    /// 進行度変化の通知先。
     public weak var stripDelegate: (any ScrubberStripViewDelegate)?
 
+    /// 現在の進行度。`0...(itemCount - 1)` の連続値。KVO 可能 (`@objc dynamic`)。
     @objc dynamic public private(set) var progress: CGFloat = 0
 
     fileprivate var itemCount: Int = 0
@@ -95,6 +119,7 @@ public final class ScrubberStripView: UICollectionView {
         register(ThumbnailCell.self, forCellWithReuseIdentifier: ThumbnailCell.reuseID)
     }
 
+    /// データソースを読み直し、先頭位置へリセットする。
     public override func reloadData() {
         itemCount = thumbnailDataSource?.numberOfThumbnails(in: self) ?? 0
         progress = 0
@@ -103,6 +128,10 @@ public final class ScrubberStripView: UICollectionView {
         resetContentOffsetForProgress(0)
     }
 
+    /// 進行度を直接指定して位置を合わせる。主に連動相手からの同期に使う。
+    /// - Parameters:
+    ///   - progress: `0...(itemCount - 1)` の連続値。範囲外は丸められる。
+    ///   - animated: アニメーション付きで移動するか。既定 `false`。
     public func setProgress(_ progress: CGFloat, animated: Bool = false) {
         guard itemCount > 0 else { return }
         let mainExtent = pageExtent
@@ -117,6 +146,7 @@ public final class ScrubberStripView: UICollectionView {
         self.progress = clamped
     }
 
+    /// 末尾にサムネイルを 1 つ追加する。追加分の view は ``thumbnailDataSource`` から取得される。
     public func appendThumbnail() {
         itemCount += 1
         let indexPath = IndexPath(item: itemCount - 1, section: 0)
@@ -124,6 +154,10 @@ public final class ScrubberStripView: UICollectionView {
         relayoutContentInset()
     }
 
+    /// 指定サムネイルを削除する。
+    /// - Parameters:
+    ///   - index: 削除するサムネイル index。範囲外なら無視される。
+    ///   - animated: アニメーション付きで削除するか。`true` の場合は完了まで `await` で待つ。
     public func deleteThumbnail(at index: Int, animated: Bool) async {
         guard index >= 0, index < itemCount else { return }
         itemCount -= 1
